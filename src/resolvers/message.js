@@ -1,28 +1,39 @@
-import { v4 as uuidv4 } from 'uuid';
+import { combineResolvers } from 'graphql-resolvers';
+import { isAuthenticated, isMessageOwner } from './authorization';
  
 export default {
   Query: {
-    messages: (parent, args, { models }) => {
-      ...
+    messages: async (_, args, { models }) => {
+      return await models.Message.findAll();
     },
-    message: (parent, { id }, { models }) => {
-      ...
+    message: async (_, { id }, { models }) => {
+      return await models.Message.findByPk(id);
     },
   },
  
   Mutation: {
-    createMessage: (parent, { text }, { me, models }) => {
-      ...
-    },
+    createMessage: combineResolvers(
+      isAuthenticated,
+      async (_, { text }, { models, userToken }) => {
+        return await models.Message.create({
+          text,
+          userId: userToken.id,
+        });
+      },
+    ),
  
-    deleteMessage: (parent, { id }, { models }) => {
-      ...
-    },
+    deleteMessage: combineResolvers(
+      isAuthenticated,
+      isMessageOwner,
+      async (_, { id }, { models }) => {
+        return await models.Message.destroy({ where: { id } });
+      },
+    ),
   },
  
   Message: {
-    user: (message, args, { models }) => {
-      ...
+    user: async (message, args, { models }) => {
+      return await models.User.findByPk(message.userId);
     },
   },
 };

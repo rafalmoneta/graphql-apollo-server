@@ -1,97 +1,108 @@
+import 'dotenv/config';
 import cors from 'cors';
+import uuidv4 from 'uuid/v4';
 import express from 'express';
-import { ApolloServer } from 'apollo-server-express';
- 
+import jwt from 'jsonwebtoken';
+import { ApolloServer, AuthenticationError} from 'apollo-server-express';
+
 import schema from './schema';
 import resolvers from './resolvers';
-import models from './models';
+import models, { sequelize } from './models';
 
 const app = express();
-app.use(cors()); 
 
-const schema = gql`
-  type Query {
-    users: [User!]
-    user(id: ID!): User
-    me: User
- 
-    messages: [Message!]!
-    message(id: ID!): Message!
-  }
- 
-  type User {
-    id: ID!
-    username: String!
-  }
- 
-  type Message {
-    id: ID!
-    text: String!
-  }
-`;
+app.use(cors());
 
-let messages = {
-  1: {
-    id: '1',
-    text: 'Hello World',
-  },
-  2: {
-    id: '2',
-    text: 'By World',
-  },
-};
-
-let users = {
-  1: {
-    id: '1',
-    username: 'Rafał Moneta',
-  },
-  2: {
-    id: '2',
-    username: 'Leo Messi',
-  },
-};
+const getTokenForUser = async req => {
+  const token = req.headers['x-token'];
  
-const me = users[1];
- 
-const resolvers = {
-  Query: {
-    users: () => {
-      return Object.values(users);
-    },
-    user: (parent, { id }) => {
-      return users[id];
-    },
-    me: () => {
-      return me;
-    },
-    messages: () => {
-      return Object.values(messages);
-    },
-    message: (parent, { id }) => {
-      return messages[id];
-    },
-  },
- 
-  User: {
-    username: user => {
-      return user.username;
+  if (token) {
+    try {
+      return await jwt.verify(token, process.env.SECRET);
+    } catch (e) {
+      throw new AuthenticationError(
+        'Your session expired. Sign in again.',
+      );
     }
-  },
+  }
 };
-
 
 const server = new ApolloServer({
   typeDefs: schema,
   resolvers,
-  context: {
-    models,
-    me: models.users[1],
-  }
-});
+  formatError: error => {
+    // remove the internal sequelize error message
+    // leave only the important validation error
+    const message = error.message
+      .replace('SequelizeValidationError: ', '')
+      .replace('Validation error: ', '');
  
+    return {
+      ...error,
+      message,
+    };
+  },
+  context: async ({ req }) => {
+    const userToken = await getTokenForUser(req);
+ 
+    return {
+      models,
+      userToken,
+      secret: process.env.SECRET,
+    };
+  },
+  
+});
+
 server.applyMiddleware({ app, path: '/graphql' });
- 
-app.listen({ port: 8000 }, () => {
-  console.log('Apollo Server on http://localhost:8000/graphql');
+
+const eraseDatabaseOnSync = true;
+
+sequelize.sync({ force: eraseDatabaseOnSync }).then(async () => {
+  if (eraseDatabaseOnSync) {
+    createUsersWithMessages();
+  }
+
+  app.listen({ port: 8000 }, () => {
+    console.log('Apollo Server on http://localhost:8000/graphql');
+  });
 });
+
+const createUsersWithMessages = async () => {
+  await models.User.create(
+    {
+      username: 'rmoneta',
+      email: 'hello@rmoneta.com',
+      password: 'password123',
+      role: 'ADMIN',
+      messages: [
+        {
+          text: 'Hello there!',
+        },
+      ],
+    },
+    {
+      include: [models.Message],
+    },
+  );
+
+  await models.User.create(
+    {
+      username: 'lmessi',
+      email: 'hello@lmessi.com',
+      password: 'messi123',
+      role: 'ADMIN',
+      messages: [
+        {
+          text: 'Happy to release ...',
+        },
+        {
+          text: 'Published a complete ...',
+        },
+      ],
+    },
+    {
+      include: [models.Message],
+    },
+  );
+};
